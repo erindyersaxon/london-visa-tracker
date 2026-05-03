@@ -53,8 +53,23 @@
 </head>
 <body>
 <div class="page">
-  <button class="print-btn" onclick="window.print()">🖨️ Print this worksheet</button>
+  <button class="print-btn" onclick="window.print()">🖨️ Print this worksheet</button>  <button id="copyBtn" onclick="copyToClipboard()" style="display:inline-block;background:#1a3a6b;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;padding:8px 16px;border-radius:6px;cursor:pointer;border:none;margin-bottom:20px;margin-left:8px;">📋 Copy answers to clipboard</button>
 
+  <div style="background:#1a0a0a;border:2px solid var(--red);border-radius:10px;padding:16px 20px;margin-bottom:24px;">
+    <div style="font-family:'Outfit',sans-serif;font-size:14px;font-weight:800;color:var(--red);margin-bottom:8px;">⚠️ Do not submit this worksheet anywhere</div>
+    <p style="font-size:13px;color:rgba(248,246,242,0.9);margin-bottom:10px;">This is a <strong>personal planning tool</strong> — it is not connected to USCIS, NVC, or any official system. <strong>Do not share it, post it in the community, or send it to anyone.</strong></p>
+    <p style="font-size:13px;color:rgba(248,246,242,0.9);margin-bottom:12px;">Your answers are only stored in your browser tab. <strong>If you close this tab, your answers are gone.</strong> Before you close:</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="background:rgba(231,111,81,0.15);border:1px solid rgba(231,111,81,0.3);border-radius:8px;padding:10px 14px;font-size:13px;flex:1;min-width:180px;">
+        <strong style="color:#f0a090;">Option 1</strong><br>
+        Click <strong>🖨️ Print</strong> to save a PDF to your own device — do not print to a shared printer.
+      </div>
+      <div style="background:rgba(42,157,143,0.1);border:1px solid rgba(42,157,143,0.25);border-radius:8px;padding:10px 14px;font-size:13px;flex:1;min-width:180px;">
+        <strong style="color:var(--teal-light);">Option 2</strong><br>
+        Click <strong>📋 Copy to clipboard</strong> and paste into a private notes app or document on your device.
+      </div>
+    </div>
+  </div>
   <div class="header">
     <div class="header-meta">
       <div>
@@ -372,5 +387,75 @@
     <span>Support: ko-fi.com/erinsaidwhat</span>
   </div>
 </div>
+
+<script>
+function copyToClipboard() {
+  const lines = [];
+  const page = document.querySelector('.page');
+  
+  // Get all section heads for context
+  const sections = page.querySelectorAll('.section');
+  sections.forEach(section => {
+    const head = section.querySelector('.section-head');
+    if (head) lines.push('\n== ' + head.textContent.trim() + ' ==');
+    
+    // Get all labelled fields
+    const fields = section.querySelectorAll('.field');
+    fields.forEach(field => {
+      const label = field.querySelector('label');
+      if (!label) return;
+      const labelText = label.childNodes[0]?.textContent?.trim() || label.textContent.trim();
+      if (!labelText) return;
+      
+      // Text inputs and textareas
+      const input = field.querySelector('input[type="text"], textarea, select');
+      if (input && input.value.trim()) {
+        lines.push(labelText + ': ' + input.value.trim());
+      }
+      
+      // Radio buttons
+      const checked = field.querySelector('input[type="radio"]:checked');
+      if (checked) {
+        const radioLabel = checked.closest('label')?.textContent?.trim() || checked.value;
+        lines.push(labelText + ': ' + radioLabel);
+      }
+
+      // Checkboxes
+      const checkboxes = field.querySelectorAll('input[type="checkbox"]:checked');
+      if (checkboxes.length) {
+        checkboxes.forEach(cb => {
+          const cbLabel = cb.closest('label')?.textContent?.trim();
+          if (cbLabel) lines.push('☑ ' + cbLabel);
+        });
+      }
+    });
+  });
+  
+  const text = lines.join('\n').trim();
+  if (!text || text.replace(/==/g,'').trim() === '') {
+    alert('Nothing to copy — fill in some fields first.');
+    return;
+  }
+  
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = '✓ Copied to clipboard';
+    btn.style.background = '#2a9d8f';
+    setTimeout(() => {
+      btn.textContent = '📋 Copy answers to clipboard';
+      btn.style.background = '#1a3a6b';
+    }, 2500);
+  }).catch(() => {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    alert('Copied to clipboard.');
+  });
+}
+</script>
 </body>
 </html>
