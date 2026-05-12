@@ -185,4 +185,63 @@ export default async function handler(req, res) {
   return res.status(200).json({
     meta: {
       total_members: deduped.length,
-      total_submissions: rows.length
+      total_submissions: rows.length,
+      last_updated: new Date().toISOString(),
+    },
+    key_stats: {
+      avg_dq_to_il:         avg(dqToIL),
+      avg_il_to_interview:  avg(ilToInterview),
+      avg_dq_to_interview:  avg(dqToInterview),
+      avg_passport_days:    avg(passportDays),
+      median_passport_days: median(passportDays),
+      avg_pickup_days:      avg(pickupDays),
+      avg_mail_days:        avg(mailDays),
+    },
+    trends: {
+      dq_to_il: {
+        all_time: avg(dqToIL),
+        last_12m: trendDqToIL(12),
+        last_6m:  trendDqToIL(6),
+        last_3m:  trendDqToIL(3),
+        last_1m:  trendDqToIL(1),
+      },
+      il_to_interview: {
+        all_time: avg(ilToInterview),
+        last_12m: trendILToInterview(12),
+        last_6m:  trendILToInterview(6),
+        last_3m:  trendILToInterview(3),
+        last_1m:  trendILToInterview(1),
+      },
+      dq_to_interview: {
+        all_time: avg(dqToInterview),
+        last_12m: trendDqToInterview(12),
+        last_6m:  trendDqToInterview(6),
+        last_3m:  trendDqToInterview(3),
+        last_1m:  trendDqToInterview(1),
+      },
+    },
+    outcomes: {
+      approved:     approved,
+      not_approved: notApproved,
+      total:        withOutcome.length,
+      approval_pct: withOutcome.length
+        ? Math.round((approved / withOutcome.length) * 100)
+        : null,
+    },
+    stage_counts: counts,
+    stage_avgs: stageAvgs,
+    il_schedule: {
+      latest_dq_with_il:      latestDQWithIL,
+      last_il_drop:           uniqueILDates[0] || null,
+      latest_interview:       latestInterview,
+      avg_gap_days:           Math.round(avgGap),
+      estimated_next_window:  estimatedNextEarly && estimatedNextLate
+        ? `${estimatedNextEarly} – ${estimatedNextLate}`
+        : null,
+      recent_drops:           ilDrops,
+    },
+    expedited: {
+      count: deduped.filter(r => r.interview_expedited).length,
+    },
+  })
+}
