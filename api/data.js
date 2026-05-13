@@ -4,8 +4,8 @@ export default async function handler(req, res) {
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
   const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // Fetch all relevant rows - only London embassy, exclude expedited
-  const url = `${SUPABASE_URL}/rest/v1/form_responses?embassy=eq.London&select=*&order=submitted_at.desc`
+  // Fetch all relevant rows - exclude expedited
+  const url = `${SUPABASE_URL}/rest/v1/form_responses?select=*&order=submitted_at.desc`
 
   const response = await fetch(url, {
     headers: {
