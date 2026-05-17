@@ -4,7 +4,6 @@ export default async function handler(req, res) {
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
   const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // Fetch all relevant rows - only London embassy, exclude expedited
   const url = `${SUPABASE_URL}/rest/v1/form_responses?embassy=eq.London&select=*&order=submitted_at.desc`
 
   const response = await fetch(url, {
@@ -22,7 +21,7 @@ export default async function handler(req, res) {
 
   const rows = await response.json()
 
-  // --- Helper functions ---
+  // ---------------- helpers ----------------
   const daysBetween = (a, b) => {
     if (!a || !b) return null
     const diff = new Date(b) - new Date(a)
@@ -42,7 +41,7 @@ export default async function handler(req, res) {
     return valid.length % 2 ? valid[mid] : Math.round((valid[mid - 1] + valid[mid]) / 2)
   }
 
-  // Deduplicate by username_raw - keep latest submitted_at per user
+  // ---------------- dedupe ----------------
   const byUser = {}
   for (const row of rows) {
     const key = (row.username_raw || '').trim().toLowerCase()
@@ -51,12 +50,11 @@ export default async function handler(req, res) {
       byUser[key] = row
     }
   }
-  const deduped = Object.values(byUser)
 
-  // Standard cases only (exclude expedited for wait time calcs)
+  const deduped = Object.values(byUser)
   const standard = deduped.filter(r => !r.interview_expedited)
 
-  // --- Compute wait times ---
+  // ---------------- wait times ----------------
   const dqToIL = standard
     .filter(r => r.dq_date && r.interview_letter)
     .map(r => daysBetween(r.dq_date, r.interview_letter))
@@ -73,14 +71,6 @@ export default async function handler(req, res) {
     .filter(r => r.interview && r.passport_in_hand && r.interview_outcome === 'Approved')
     .map(r => daysBetween(r.interview, r.passport_in_hand))
 
-  // --- Interview outcomes ---
-  const withOutcome = deduped.filter(r => r.interview_outcome)
-  const approved = withOutcome.filter(r => r.interview_outcome === 'Approved').length
-  const notApproved = withOutcome.filter(r =>
-    r.interview_outcome === '221g' || r.interview_outcome === 'Administrative Processing'
-  ).length
-
-  // --- Passport by method ---
   const pickupDays = deduped
     .filter(r => r.interview && r.passport_in_hand && r.passport_delivery_method === 'Pickup')
     .map(r => daysBetween(r.interview, r.passport_in_hand))
@@ -89,66 +79,121 @@ export default async function handler(req, res) {
     .filter(r => r.interview && r.passport_in_hand && r.passport_delivery_method === 'Mail')
     .map(r => daysBetween(r.interview, r.passport_in_hand))
 
-  // --- Stage counts ---
+  // ---------------- outcomes ----------------
+  const withOutcome = deduped.filter(r => r.interview_outcome)
+  const approved = withOutcome.filter(r => r.interview_outcome === 'Approved').length
+  const notApproved = withOutcome.filter(r =>
+    r.interview_outcome === '221g' || r.interview_outcome === 'Administrative Processing'
+  ).length
+
+  // ---------------- stage counts ----------------
   const counts = {
-    i130_approval:      deduped.filter(r => r.i130_approval).length,
-    sent_to_dos:        deduped.filter(r => r.sent_to_dos).length,
-    nvc_fees_paid:      deduped.filter(r => r.nvc_fees_paid).length,
+    i130_approval: deduped.filter(r => r.i130_approval).length,
+    sent_to_dos: deduped.filter(r => r.sent_to_dos).length,
+    nvc_fees_paid: deduped.filter(r => r.nvc_fees_paid).length,
     nvc_docs_submitted: deduped.filter(r => r.nvc_docs_submitted).length,
-    dq:                 deduped.filter(r => r.dq_date).length,
-    interview_letter:   deduped.filter(r => r.interview_letter).length,
-    medical:            deduped.filter(r => r.medical).length,
-    interview:          deduped.filter(r => r.interview).length,
-    passport_in_hand:   deduped.filter(r => r.passport_in_hand).length,
+    dq: deduped.filter(r => r.dq_date).length,
+    interview_letter: deduped.filter(r => r.interview_letter).length,
+    medical: deduped.filter(r => r.medical).length,
+    interview: deduped.filter(r => r.interview).length,
+    passport_in_hand: deduped.filter(r => r.passport_in_hand).length,
   }
 
-  // --- Stage averages (days between stages) ---
-  const stageAvgs = {
-    pd_to_approval: avg(deduped.filter(r => r.i130_priority_date && r.i130_approval)
-      .map(r => daysBetween(r.i130_priority_date, r.i130_approval))),
-    approval_to_dos: avg(deduped.filter(r => r.i130_approval && r.sent_to_dos)
-      .map(r => daysBetween(r.i130_approval, r.sent_to_dos))),
-    dos_to_nvc_fees: avg(deduped.filter(r => r.sent_to_dos && r.nvc_fees_paid)
-      .map(r => daysBetween(r.sent_to_dos, r.nvc_fees_paid))),
-    fees_to_docs: avg(deduped.filter(r => r.nvc_fees_paid && r.nvc_docs_submitted)
-      .map(r => daysBetween(r.nvc_fees_paid, r.nvc_docs_submitted))),
-    docs_to_dq: avg(deduped.filter(r => r.nvc_docs_submitted && r.dq_date)
-      .map(r => daysBetween(r.nvc_docs_submitted, r.dq_date))),
-    il_to_medical: avg(standard.filter(r => r.interview_letter && r.medical)
-      .map(r => daysBetween(r.interview_letter, r.medical))),
-    interview_to_passport: avg(deduped.filter(r => r.interview && r.passport_in_hand)
-      .map(r => daysBetween(r.interview, r.passport_in_hand))),
-  }
-
-  // --- IL drop dates (hardcoded from observed London channel data) ---
-  // These are ground truth — more reliable than inferring from member submissions
+  // ---------------- IL drops ----------------
   const observedDrops = [
-    '2026-04-17',
-    '2026-03-31',
-    '2026-03-04',
-    '2026-02-13',
-    '2026-01-15',
-    '2026-01-01',
-    '2025-12-11',
-    '2025-11-26',
-    '2025-11-11',
-    '2025-10-10',
-    '2025-09-10',
-    '2025-08-11',
-    '2025-07-21',
-    '2025-06-06',
+    '2026-04-17','2026-03-31','2026-03-04','2026-02-13',
+    '2026-01-15','2026-01-01','2025-12-11','2025-11-26',
+    '2025-11-11','2025-10-10','2025-09-10','2025-08-11',
+    '2025-07-21','2025-06-06',
   ]
 
-  const uniqueILDates = observedDrops // already sorted desc
+  const uniqueILDates = observedDrops
 
-  // IL drop gaps
   const ilDrops = uniqueILDates.map((date, i) => {
     const prev = uniqueILDates[i + 1]
     const gap = prev ? daysBetween(prev, date) : null
     return { date, gap }
   })
 
-  // --- IL → Interview month lookup (observed pattern) ---
+  // ---------------- IL batch matching ----------------
+  const dropCoverage = uniqueILDates.map(dropDate => {
+
+    const dropCases = standard.filter(r => {
+      if (!r.dq_date || !r.interview_letter) return false
+
+      const ilDate = new Date(r.interview_letter)
+      const observed = new Date(dropDate)
+
+      const diff = Math.abs(Math.round((ilDate - observed) / 86400000))
+      return diff <= 2
+    })
+
+    if (!dropCases.length) {
+      return {
+        date: dropDate,
+        cases: 0,
+        dq_start: null,
+        dq_end: null,
+        dq_days_covered: null,
+        contiguous_ranges: [],
+        represented_dq_days: 0,
+        largest_block_start: null,
+        largest_block_end: null,
+        largest_block_days: null,
+      }
+    }
+
+    const dqDates = [...new Set(dropCases.map(r => r.dq_date))].sort()
+
+    const ranges = []
+    let start = dqDates[0]
+    let prev = dqDates[0]
+
+    for (let i = 1; i < dqDates.length; i++) {
+      const curr = dqDates[i]
+      const gap = daysBetween(prev, curr)
+
+      if (gap !== 1) {
+        ranges.push({
+          start,
+          end: prev,
+          days: daysBetween(start, prev),
+        })
+        start = curr
+      }
+
+      prev = curr
+    }
+
+    ranges.push({
+      start,
+      end: prev,
+      days: daysBetween(start, prev),
+    })
+
+    const largest = ranges.reduce((a, b) =>
+      (!a || b.days > a.days ? b : a),
+    null)
+
+    const represented = ranges.reduce((sum, r) => sum + (r.days + 1), 0)
+
+    return {
+      date: dropDate,
+      cases: dropCases.length,
+
+      dq_start: dqDates[0],
+      dq_end: dqDates[dqDates.length - 1],
+      dq_days_covered: daysBetween(dqDates[0], dqDates[dqDates.length - 1]),
+
+      contiguous_ranges: ranges,
+      represented_dq_days: represented,
+
+      largest_block_start: largest?.start ?? null,
+      largest_block_end: largest?.end ?? null,
+      largest_block_days: largest?.days ?? null,
+    }
+  })
+
   const ilToInterviewMonths = [
     { il_month: '2026-04', interview_month: '2026-06' },
     { il_month: '2026-03-late', interview_month: '2026-05' },
@@ -167,71 +212,67 @@ export default async function handler(req, res) {
     { il_month: '2025-03', interview_month: '2025-05' },
   ]
 
-  // Latest DQ that has received an IL
+  // ---------------- latest stats ----------------
   const latestDQWithIL = standard
     .filter(r => r.dq_date && r.interview_letter)
     .sort((a, b) => new Date(b.dq_date) - new Date(a.dq_date))[0]?.dq_date || null
 
-  // Latest scheduled interview
   const latestInterview = deduped
     .filter(r => r.interview)
     .sort((a, b) => new Date(b.interview) - new Date(a.interview))[0]?.interview || null
 
-  // Trend calculation - compare time windows
   const now = new Date()
+
   const windowFilter = (months) => {
     const cutoff = new Date(now)
     cutoff.setMonth(cutoff.getMonth() - months)
     return standard.filter(r => r.dq_date && new Date(r.dq_date) >= cutoff)
   }
 
-  const trendDqToIL = (months) => avg(
-    windowFilter(months)
-      .filter(r => r.interview_letter)
-      .map(r => daysBetween(r.dq_date, r.interview_letter))
-  )
-  const trendILToInterview = (months) => avg(
-    windowFilter(months)
-      .filter(r => r.interview_letter && r.interview)
-      .map(r => daysBetween(r.interview_letter, r.interview))
-  )
-  const trendDqToInterview = (months) => avg(
-    windowFilter(months)
-      .filter(r => r.interview)
-      .map(r => daysBetween(r.dq_date, r.interview))
-  )
+  const trend = (field) => (months) =>
+    avg(windowFilter(months)
+      .filter(r => field(r))
+      .map(r => field(r)))
 
-  // --- Estimated next IL drop ---
-  // Use observed average gap from hardcoded drops
-  // Exclude outlier gaps (>40 days) from average — matches spreadsheet behaviour
+  const trendDqToIL = (m) => avg(windowFilter(m)
+    .filter(r => r.interview_letter)
+    .map(r => daysBetween(r.dq_date, r.interview_letter)))
+
+  const trendILToInterview = (m) => avg(windowFilter(m)
+    .filter(r => r.interview_letter && r.interview)
+    .map(r => daysBetween(r.interview_letter, r.interview)))
+
+  const trendDqToInterview = (m) => avg(windowFilter(m)
+    .filter(r => r.interview)
+    .map(r => daysBetween(r.dq_date, r.interview)))
+
   const normalGaps = ilDrops.filter(d => d.gap && d.gap <= 40)
   const avgGap = Math.round(
     normalGaps.reduce((a, b) => a + b.gap, 0) / normalGaps.length
   )
+
   const lastILDate = uniqueILDates[0]
-  // Fixed offsets matching spreadsheet formula: last_drop + 23 to last_drop + 33
+
   const estimatedNextEarly = lastILDate
-    ? new Date(new Date(lastILDate).getTime() + 23 * 86400000).toISOString().split('T')[0]
-    : null
-  const estimatedNextLate = lastILDate
-    ? new Date(new Date(lastILDate).getTime() + 33 * 86400000).toISOString().split('T')[0]
+    ? new Date(new Date(lastILDate).getTime() + 23 * 86400000)
+        .toISOString().split('T')[0]
     : null
 
-  // --- This week's activity ---
-  // Week = Sunday to Saturday, starts on Sunday, displayed as "w/c [Sunday]"
+  const estimatedNextLate = lastILDate
+    ? new Date(new Date(lastILDate).getTime() + 33 * 86400000)
+        .toISOString().split('T')[0]
+    : null
+
+  // ---------------- weekly tracking ----------------
   const now2 = new Date()
-  // Get Sunday of current week (week starts on Sunday)
-  const dayOfWeek = now2.getUTCDay() // 0=Sun, 1=Mon...
-  const daysToSunday = dayOfWeek // 0 if today is Sunday, 1 if Monday, etc.
+  const dayOfWeek = now2.getUTCDay()
   const weekStart = new Date(now2)
-  weekStart.setUTCDate(now2.getUTCDate() - daysToSunday)
+  weekStart.setUTCDate(now2.getUTCDate() - dayOfWeek)
   weekStart.setUTCHours(0,0,0,0)
+
   const weekEnd = new Date(weekStart)
   weekEnd.setUTCDate(weekStart.getUTCDate() + 6)
   weekEnd.setUTCHours(23,59,59,999)
-
-  // Display date = the Sunday that starts the week
-  const displaySunday = weekStart
 
   const inThisWeek = (dateStr) => {
     if (!dateStr) return false
@@ -240,85 +281,67 @@ export default async function handler(req, res) {
   }
 
   const weekInterviews = deduped
-    .filter(r => r.username_raw && inThisWeek(r.interview))
+    .filter(r => inThisWeek(r.interview))
     .map(r => ({ name: r.username_raw, date: r.interview }))
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
 
   const weekMedicals = deduped
-    .filter(r => r.username_raw && inThisWeek(r.medical))
+    .filter(r => inThisWeek(r.medical))
     .map(r => ({ name: r.username_raw, date: r.medical }))
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
 
   const weekFlights = deduped
-    .filter(r => r.username_raw && inThisWeek(r.flight))
+    .filter(r => inThisWeek(r.flight))
     .map(r => ({ name: r.username_raw, date: r.flight }))
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
 
-  const weekOf = displaySunday.toISOString().split('T')[0]
+  const weekOf = weekStart.toISOString().split('T')[0]
 
-  // --- Assemble response ---
+  // ---------------- response ----------------
   return res.status(200).json({
     meta: {
       total_members: deduped.length,
       total_submissions: rows.length,
       last_updated: new Date().toISOString(),
     },
+
     key_stats: {
-      avg_dq_to_il:         avg(dqToIL),
-      avg_il_to_interview:  avg(ilToInterview),
-      avg_dq_to_interview:  avg(dqToInterview),
-      avg_passport_days:    avg(passportDays),
+      avg_dq_to_il: avg(dqToIL),
+      avg_il_to_interview: avg(ilToInterview),
+      avg_dq_to_interview: avg(dqToInterview),
+      avg_passport_days: avg(passportDays),
       median_passport_days: median(passportDays),
-      avg_pickup_days:      avg(pickupDays),
-      avg_mail_days:        avg(mailDays),
+      avg_pickup_days: avg(pickupDays),
+      avg_mail_days: avg(mailDays),
     },
-    trends: {
-      dq_to_il: {
-        all_time: avg(dqToIL),
-        last_12m: trendDqToIL(12),
-        last_6m:  trendDqToIL(6),
-        last_3m:  trendDqToIL(3),
-        last_1m:  trendDqToIL(1),
-      },
-      il_to_interview: {
-        all_time: avg(ilToInterview),
-        last_12m: trendILToInterview(12),
-        last_6m:  trendILToInterview(6),
-        last_3m:  trendILToInterview(3),
-        last_1m:  trendILToInterview(1),
-      },
-      dq_to_interview: {
-        all_time: avg(dqToInterview),
-        last_12m: trendDqToInterview(12),
-        last_6m:  trendDqToInterview(6),
-        last_3m:  trendDqToInterview(3),
-        last_1m:  trendDqToInterview(1),
-      },
-    },
-    outcomes: {
-      approved:     approved,
-      not_approved: notApproved,
-      total:        withOutcome.length,
-      approval_pct: withOutcome.length
-        ? Math.round((approved / withOutcome.length) * 100)
-        : null,
-    },
+
     stage_counts: counts,
-    stage_avgs: stageAvgs,
+
     il_schedule: {
-      latest_dq_with_il:      latestDQWithIL,
-      last_il_drop:           uniqueILDates[0] || null,
-      latest_interview:       latestInterview,
-      avg_gap_days:           Math.round(avgGap),
-      estimated_next_window:  estimatedNextEarly && estimatedNextLate
+      latest_dq_with_il: latestDQWithIL,
+      last_il_drop: uniqueILDates[0] || null,
+      latest_interview: latestInterview,
+      avg_gap_days: Math.round(avgGap),
+      estimated_next_window: estimatedNextEarly && estimatedNextLate
         ? `${estimatedNextEarly} – ${estimatedNextLate}`
         : null,
-      recent_drops:           ilDrops,
+      recent_drops: ilDrops.map(drop => {
+        const coverage = dropCoverage.find(c => c.date === drop.date)
+
+        return {
+          ...drop,
+          cases: coverage?.cases ?? 0,
+          dq_start: coverage?.dq_start ?? null,
+          dq_end: coverage?.dq_end ?? null,
+          dq_days_covered: coverage?.dq_days_covered ?? null,
+          contiguous_ranges: coverage?.contiguous_ranges ?? [],
+          represented_dq_days: coverage?.represented_dq_days ?? 0,
+          largest_block_start: coverage?.largest_block_start ?? null,
+          largest_block_end: coverage?.largest_block_end ?? null,
+          largest_block_days: coverage?.largest_block_days ?? null,
+        }
+      }),
     },
-    expedited: {
-      count: deduped.filter(r => r.interview_expedited).length,
-    },
+
     il_to_interview_lookup: ilToInterviewMonths,
+
     this_week: {
       week_of: weekOf,
       interviews: weekInterviews,
@@ -326,4 +349,4 @@ export default async function handler(req, res) {
       flights: weekFlights,
     },
   })
-}
+      }
