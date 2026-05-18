@@ -201,7 +201,36 @@
   .queue-value.accent { color: var(--accent); }
   .queue-value.teal   { color: var(--teal-light); }
   .queue-sub { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+/* Watermark — stat grid wrapper */
+.stat-grid {
+  position: relative;
+}
+.stat-grid::after {
+  content: 'americanvisaguide.com';
+  position: absolute;
+  bottom: -20px;
+  right: 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(200,169,110,0.25);
+  pointer-events: none;
+  font-family: 'Outfit', sans-serif;
+}
 
+/* Watermark — week widget */
+.week-widget::after {
+  content: 'americanvisaguide.com';
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(200,169,110,0.25);
+  pointer-events: none;
+  font-family: 'Outfit', sans-serif;
+}
   /* Next window banner */
   .next-window-banner {
     background: rgba(42,157,143,0.08); border: 1px solid rgba(42,157,143,0.2);
